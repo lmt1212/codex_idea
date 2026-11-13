@@ -69,7 +69,32 @@ def validate_qa(raw, path, facts):
                 candidate_steps=path["candidate_steps"], verification_status="pending")
 
 
+def formula_truncations(qa,chunks):
+    """Flag a narrow, explicit formula-prefix omission; not a chemistry parser."""
+    issues=[]
+    for claim in qa['answer_claims']:
+        if '化学式' not in claim.get('text',''):
+            continue
+        claimed=re.findall(r'[A-Za-z][A-Za-z0-9()]*',re.sub(r'\s+','',claim['text']))
+        for cid in claim.get('evidence_chunk_ids',[]):
+            source=chunks[cid]['text']
+            if '化学式' not in source:
+                continue
+            formulas=re.findall(r'[A-Za-z][A-Za-z0-9()]*',re.sub(r'\s+','',source))
+            for value in claimed:
+                if not any(c.isdigit() for c in value) or ')' not in value:
+                    continue
+                for full in formulas:
+                    if full.startswith(value) and re.fullmatch(r'[xyz0-9]+',full[len(value):]):
+                        issues.append(dict(claim_id=claim['claim_id'],chunk_id=cid,answer_fragment=value,
+                                           source_fragment=full,reason='formula_suffix_omitted'))
+    return issues
+
+
 def verify_support(qa, chunks, client):
+    issues=formula_truncations(qa,chunks)
+    if issues:
+        return dict(passed=False,deterministic_issues=issues,reason='quoted formula suffix missing from answer')
     result = client.ask("answer_support",
         "逐条检查答案事实是否被其引用证据支持，包括事实之间的推导。检查无遗漏条件、时间、否定、"
         "单位与范围；引用存在不代表支持。检查题意、答案完整性、共同推理目标和唯一性，排除并列拼题。"

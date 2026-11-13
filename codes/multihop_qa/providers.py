@@ -82,7 +82,10 @@ class JSONClient:
 
 class LocalJSONClient:
     """Local model inference: no document text is sent to an external API."""
-    def __init__(self,model,device='cuda',max_new_tokens=2048,max_calls=128,extraction_strategy='staged'):
+    def __init__(self,model,device='cuda',max_new_tokens=2048,max_calls=128,extraction_strategy='staged',json_mode='schema'):
+        if json_mode not in {'schema','unconstrained'}:
+            raise ValueError('unknown JSON decoding mode')
+        self.json_mode=json_mode
         self.model=str(Path(model).resolve())
         self.device=device
         self.max_new_tokens=max_new_tokens
@@ -90,6 +93,7 @@ class LocalJSONClient:
         self.history=[]
         self.tokenizer=None
         self.encoder=None
+        self._constraint_tokenizer_data=None
         self.extraction_strategy=extraction_strategy
         self.require_fact_review=True
 
@@ -100,7 +104,7 @@ class LocalJSONClient:
         record=dict(task=task,actual_model='local:'+self.model,status='running',
                     instruction=instruction,input=data,
                     request_sha256=hashlib.sha256(json.dumps([instruction,data],ensure_ascii=False,sort_keys=True).encode()).hexdigest(),
-                    parameters=dict(max_new_tokens=self.max_new_tokens,do_sample=False,enable_thinking=False),
+                    parameters=dict(max_new_tokens=self.max_new_tokens,do_sample=False,enable_thinking=False,json_mode=self.json_mode),
                     raw_response=None)
         record['retry_of']=_retry_of
         self.history.append(record)
@@ -142,9 +146,18 @@ class LocalJSONClient:
                   dict(role='user',content=json.dumps(data,ensure_ascii=False))]
         prompt=self.tokenizer.apply_chat_template(messages,tokenize=False,add_generation_prompt=True,enable_thinking=False)
         inputs=self.tokenizer(prompt,return_tensors='pt',add_special_tokens=False).to(self.device)
+        constraints={}
+        if self.json_mode=='schema':
+            from .response_schema import response_schema
+            from .constrained_decoding import tokenizer_data,prefix_filter
+            schema=response_schema(task,data)
+            record['response_schema']=schema
+            if self._constraint_tokenizer_data is None:
+                self._constraint_tokenizer_data=tokenizer_data(self.tokenizer)
+            constraints['prefix_allowed_tokens_fn']=prefix_filter(self._constraint_tokenizer_data,schema)
         with torch.no_grad():
             generated=self.encoder.generate(**inputs,max_new_tokens=self.max_new_tokens,do_sample=False,
-                                           pad_token_id=self.tokenizer.eos_token_id)
+                                           pad_token_id=self.tokenizer.eos_token_id,**constraints)
         value=self.tokenizer.decode(generated[0,inputs.input_ids.shape[1]:],skip_special_tokens=True).strip()
         record['raw_response']=value
         if value.startswith('```'):

@@ -48,6 +48,7 @@ def main():
     generation.add_argument('--generator-backend',choices=['local','api'],default='local')
     generation.add_argument('--verifier-backend',choices=['local','api'],default='local')
     generation.add_argument('--device',default='cuda')
+    generation.add_argument('--json-mode',choices=['schema','unconstrained'],default='schema',help='local generation syntax constraints; unconstrained is for diagnostics')
     generation.add_argument('--review-mode',choices=['independent','same-model-diagnostic'],default='independent')
     generation.add_argument("--threshold", type=float, default=.1)
     generation.add_argument('--calibration',type=Path,help='validated calibration.json; overrides threshold')
@@ -96,7 +97,7 @@ def main():
                 parser.error('invalid or uncalibrated threshold artifact')
             threshold=calibration['threshold'] if calibration else args.threshold
             def client(backend,model):
-                return LocalJSONClient(model,device=args.device) if backend=='local' else JSONClient(model)
+                return LocalJSONClient(model,device=args.device,json_mode=args.json_mode) if backend=='local' else JSONClient(model)
             generator=client(args.generator_backend,args.generator_model)
             verifier=client(args.verifier_backend,args.verifier_model)
             if generator.model==verifier.model and args.review_mode=='same-model-diagnostic':

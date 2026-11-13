@@ -4,7 +4,9 @@
 
 当前服务器：[服务器连接说明](服务器连接说明.md)，SSH 端口 `35276`，本机可用 `ssh codex-idea-autodl`。项目已同步 GitHub，后续修复与真实试跑状态见进展记录。
 
-最新开发批次：连续术语上下文、统一失败汇总、证据引用目录和最多一次格式重试已接入；固定 12 块得到 11 条候选事实，真实必要性试验已运行但未成功验收。当前 74 项测试通过，真实多跳 QA 自动通过仍为 0。完整状态以项目进展记录为准。
+最新开发批次：本地 schema 解码、Transformers 5 兼容层、冻结请求双模型对照和化学式后缀检查已接入；83 项测试通过。完整必要性曾产生 1 条模型自动候选，但已被新规则复核发现公式遗漏并拦截，仍无正式验收样本。完整状态以项目进展记录为准。
+
+本地推理需安装 `requirements-training.txt` 中的 `lm-format-enforcer==0.11.3`；`generate` 默认 `--json-mode schema`。保留 `--json-mode unconstrained` 用于诊断。冻结请求对照示例：`python scripts/replay_verifier.py output/dev_context_qa_04 --models /root/autodl-tmp/Qwen2.5-3B-Instruct /root/autodl-tmp/Qwen3-4B --output output/new_replay`。该工具只比较请求输出，不创建人工标签或正式通过结果。
 
 依据 [多跳问答自动构建方案](多跳问答自动构建方案.md)，实现保留原文出处的文档解析、真实向量生成、证据路径搜索、问答生成与验证、人工盲评、评分校准和 SFT 实验接口。
 

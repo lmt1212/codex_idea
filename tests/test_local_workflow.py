@@ -21,6 +21,72 @@ class StagedClient:
 
 
 class LocalWorkflowTests(unittest.TestCase):
+    def test_line_wrapped_formula_suffix_cannot_be_dropped(self):
+        from codes.multihop_qa.verification import verify_support
+        qa=dict(answer_claims=[dict(claim_id='c',text='化学式是REx(C2O4)',evidence_chunk_ids=['e'])],evidence_chunk_ids=['e'])
+        client=FixtureClient('judge')
+        with patch.object(client,'ask') as ask:
+            check=verify_support(qa,{'e':dict(text='化学式REx(C2O4)\ny 表示。')},client)
+        self.assertFalse(check['passed']);ask.assert_not_called()
+        self.assertEqual(check['deterministic_issues'][0]['source_fragment'],'REx(C2O4)y')
+
+    def test_complete_formula_and_non_formula_claims_are_unchanged(self):
+        from codes.multihop_qa.verification import formula_truncations
+        qa=dict(answer_claims=[dict(claim_id='c',text='化学式REx(C2O4)y',evidence_chunk_ids=['e'])])
+        self.assertEqual(formula_truncations(qa,{'e':dict(text='化学式REx(C2O4)\ny 表示。')}),[])
+
+    def test_path_schema_requires_complete_verdict_before_ending(self):
+        from codes.multihop_qa.response_schema import response_schema
+        schema=response_schema('path_verification',dict(facts=[dict(fact_id='f')]))
+        self.assertIn('facts',schema['required'])
+        self.assertIn('common_target',schema['required'])
+        row=schema['properties']['facts']['items']
+        self.assertEqual(row['properties']['fact_id']['enum'],['f'])
+        self.assertIn('qualifiers_complete',row['required'])
+        self.assertIsNone(response_schema('unknown',{}))
+
+    def test_generation_schema_allows_abstention_without_forcing_an_answer(self):
+        from codes.multihop_qa.response_schema import response_schema
+        schema=response_schema('generation',dict(path=dict(fact_ids=['f'])))
+        choices=schema['properties']['qa']['anyOf']
+        self.assertIn(dict(type='null'),choices)
+        answer=choices[1]
+        self.assertIn('answer_claims',answer['required'])
+        self.assertEqual(answer['properties']['answer_claims']['items']['properties']['fact_ids']['items']['enum'],['f'])
+
+    def test_constraint_tokenizer_retains_unicode_and_skips_special_tokens(self):
+        from codes.multihop_qa.constrained_decoding import regular_tokens
+        class Tokenizer:
+            all_special_ids=[2]
+            def __len__(self):return 3
+            def encode(self,value,add_special_tokens=False):return [0]
+            def decode(self,ids):return ''.join({0:'0',1:'甲',2:'<eos>'}[i] for i in ids)
+        self.assertEqual(list(regular_tokens(Tokenizer())),[(0,'0',False),(1,'甲',False)])
+
+    def test_coverage_schema_limits_references_but_not_semantic_booleans(self):
+        from codes.multihop_qa.response_schema import response_schema
+        schema=response_schema('answer_coverage',dict(target_claims=[dict(claim_id='c1')],allowed_citations=[dict(citation_id='e0')]))
+        row=schema['properties']['claims']['items']
+        self.assertEqual(row['properties']['citations']['items']['enum'],['e0'])
+        self.assertEqual(row['properties']['claim_id']['enum'],['c1'])
+        self.assertEqual(row['properties']['supported'],dict(type='boolean'))
+        self.assertEqual(schema['properties']['claims']['maxItems'],1)
+
+    def test_coverage_schema_rejects_absent_evidence_catalogue(self):
+        from codes.multihop_qa.response_schema import response_schema
+        with self.assertRaises(ValueError):response_schema('answer_coverage',dict(target_claims=[dict(claim_id='c')],allowed_citations=[]))
+
+    def test_local_decoding_mode_is_explicit_and_audited(self):
+        from codes.multihop_qa.providers import LocalJSONClient
+        with self.assertRaises(ValueError):LocalJSONClient('unused',json_mode='fallback')
+        client=LocalJSONClient('unused',json_mode='unconstrained')
+        with patch.object(client,'_ask',return_value={}):client.ask('test','prompt',{})
+        self.assertEqual(client.history[0]['parameters']['json_mode'],'unconstrained')
+
+    def test_schema_mode_does_not_salvage_trailing_junk_after_generation(self):
+        from codes.multihop_qa.providers import parse_model_object
+        with self.assertRaises(ValueError):parse_model_object('{"claims": []}"')
+
     def test_format_retry_is_bounded_and_preserves_both_attempts(self):
         from codes.multihop_qa.providers import LocalJSONClient,parse_model_object
         client=LocalJSONClient('unused',max_calls=8)
