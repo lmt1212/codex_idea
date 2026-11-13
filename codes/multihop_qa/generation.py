@@ -19,7 +19,7 @@ def generate_qa(path, facts, chunks, generator, verifier, threshold=.1, review_m
         "唯一片段，所有实质答案文本都必须由不重叠的claims覆盖，包含连接结论。只能引用给定fact_ids。",
         dict(path=path, facts=[facts[f] for f in path["fact_ids"]],
              evidence=[chunks[c] for c in path["evidence_chunk_ids"]],
-             requirements='比较类型必须询问两个对象的共同维度；每条路径事实均需参与回答，不得改为只用一处证据的定义题。'))
+             requirements='比较类型须要求分别说明两个对象在同一维度的差异，完整保留各自数量或条件；禁止只问共同点。每条路径事实均需参与回答，不得改为只用一处证据的定义题。'))
     if result.get("qa") is None:
         return None, dict(stage="generation", path_id=path["path_id"], reason="insufficient_evidence")
     qa = validate_qa(result["qa"], path, facts)
@@ -29,7 +29,7 @@ def generate_qa(path, facts, chunks, generator, verifier, threshold=.1, review_m
     necessity = verify_necessity(qa, chunks, verifier, threshold)
     qa.update(path_check=path_check, support_check=support, necessity_check=necessity,
               necessity_score=necessity.get("necessity_score"),
-              generation_metadata=dict(pipeline_version=VERSION, prompt_version="1",
+              generation_metadata=dict(pipeline_version=VERSION, prompt_version="2",
                                        generator=generator.model, verifier=verifier.model),
               verification_status="auto_passed_pending_human_review" if necessity["passed"] else "rejected")
     if not necessity["passed"]:

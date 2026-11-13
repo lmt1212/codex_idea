@@ -93,7 +93,7 @@ class LocalJSONClient:
         self.extraction_strategy=extraction_strategy
         self.require_fact_review=True
 
-    def ask(self,task,instruction,data):
+    def ask(self,task,instruction,data,_retry_of=None):
         if len(self.history)>=self.max_calls:
             raise ValueError('local inference call budget exhausted')
         started=time.monotonic()
@@ -102,6 +102,7 @@ class LocalJSONClient:
                     request_sha256=hashlib.sha256(json.dumps([instruction,data],ensure_ascii=False,sort_keys=True).encode()).hexdigest(),
                     parameters=dict(max_new_tokens=self.max_new_tokens,do_sample=False,enable_thinking=False),
                     raw_response=None)
+        record['retry_of']=_retry_of
         self.history.append(record)
         try:
             result=self._ask(task,instruction,data,record)
@@ -109,9 +110,15 @@ class LocalJSONClient:
             return result
         except Exception as ex:
             record.update(status='failed',error_type=type(ex).__name__,error=str(ex))
+            record['elapsed_seconds']=time.monotonic()-started
+            if (isinstance(ex,ValueError) and record['raw_response'] is not None
+                    and str(ex).startswith(('model output is neither JSON','model response must be an object'))
+                    and _retry_of is None and len(self.history)<self.max_calls):
+                record['format_retry_scheduled']=True
+                return self.ask(task,instruction+' 上次响应格式解析失败。请重新根据相同资料输出一个完整严格JSON对象；禁止尾随引号、第二个对象及任何解释，不修改资料事实。',data,_retry_of=len(self.history)-1)
             raise
         finally:
-            record['elapsed_seconds']=time.monotonic()-started
+            record.setdefault('elapsed_seconds',time.monotonic()-started)
 
     def _ask(self,task,instruction,data,record):
         import torch
@@ -125,7 +132,7 @@ class LocalJSONClient:
             self.encoder=AutoModelForCausalLM.from_pretrained(self.model,local_files_only=True,dtype=dtype,attn_implementation='sdpa').to(self.device).eval()
         examples={
             'path_verification':dict(facts=[dict(fact_id=f['fact_id'],supported=False,qualifiers_complete=False) for f in data.get('facts',[])],entity_identity=False,relations_valid=False,common_target=False,reason='判断理由'),
-            'answer_support':dict(claims=[dict(claim_id=c['claim_id'],entailed=False,qualifiers_complete=False,citations_correct=False) for c in data.get('qa',{}).get('answer_claims',[])],question_clear=False,answer_complete=False,unique_answer=False,connected_reasoning=False,reason='判断理由'),
+            'answer_support':dict(claims=[dict(claim_id=c['claim_id'],entailed=False,qualifiers_complete=False,citations_correct=False,missing_qualifiers=['具体遗漏或无法确认的条件'],assessment_reason='结合本条证据说明判断依据') for c in data.get('qa',{}).get('answer_claims',[])],question_clear=False,answer_complete=False,unique_answer=False,connected_reasoning=False,reason='判断理由'),
             'blind_solve':dict(answer='',sufficient=False),
             'answer_coverage':dict(claims=[dict(claim_id=c['claim_id'],covered=False,supported=False,citations=[]) for c in data.get('target_claims',[])]),
             'generation':dict(qa=dict(question='问题',answer='答案',answer_claims=[dict(text='答案',fact_ids=data.get('path',{}).get('fact_ids',[]))]))}

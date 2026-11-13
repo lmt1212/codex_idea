@@ -57,6 +57,25 @@ def extract(chunk, client, aliases=None):
     return [validate_fact(f, chunk, aliases) for f in rows]
 
 
+def definition_context(content, quote):
+    """Recover only a contiguous heading already present in the same chunk."""
+    start=content.index(quote)
+    prefix=content[:start]
+    lines=[m for m in re.finditer(r'[^\n]+',prefix) if m.group().strip()]
+    if lines:
+        last=lines[-1]
+        if not re.search(r'[。！？；]',last.group()) and re.search(r'[\u4e00-\u9fff]',last.group()) and len(last.group())<=100:
+            quote=content[last.start():start+len(quote)]
+    hint=''
+    # A bilingual glossary heading is an explicit term, not an inferred alias.
+    for line in quote.splitlines()[:5]:
+        match=re.fullmatch(r'\s*([\u4e00-\u9fff][\u4e00-\u9fff（）()·-]{1,39})\s+[A-Za-z][A-Za-z ,，-]*\s*',line)
+        if match:
+            hint=match[1]
+            break
+    return quote,hint
+
+
 def extract_staged(chunk,client,aliases=None):
     selected=client.ask('select_source',
         '从text中选择表达明确事实的连续完整原文，逐字复制，保留换行、条件、否定和时间。定义句省略主体时必须连同前面的术语标题一起选取，不能只摘定义后半句。只输出JSON：{"quote":"逐字原句"}。不得改写或拼接不连续内容。',
@@ -64,12 +83,16 @@ def extract_staged(chunk,client,aliases=None):
     quote=selected.get('quote')
     if not isinstance(quote,str) or not quote or chunk['text'].count(quote)!=1:
         raise ValueError('selected source quote missing or ambiguous')
+    quote,subject_hint=definition_context(chunk['text'],quote)
     triple=client.ask('extract_triple',
         '从给定原句抽取一个三元组，subject、predicate、object都必须是原句中的连续原文子串，不能改字或补常识。'
-        '只输出JSON：{"subject":"主体原文","predicate":"关系原文","object":"客体原文"}。',dict(text=quote))
+        'subject_hint非空时，主体必须使用该原文术语，不得用定义中的残句替代。'
+        '只输出JSON：{"subject":"主体原文","predicate":"关系原文","object":"客体原文"}。',dict(text=quote,subject_hint=subject_hint))
     for key in ('subject','predicate','object'):
         if not isinstance(triple.get(key),str) or not triple[key] or triple[key] not in quote:
             raise ValueError('triple endpoint not anchored to selected quote: '+key)
+    if subject_hint and triple['subject']!=subject_hint:
+        raise ValueError('subject does not match explicitly anchored glossary term')
     if getattr(client,'require_fact_review',False) and re.match(r'^(?:以.+为原料|为一种|由.+组成的物质)',triple['subject']):
         raise ValueError('subject is a definition fragment rather than an explicit term')
     qualifiers=client.ask('classify_fact',

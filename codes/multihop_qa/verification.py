@@ -122,18 +122,24 @@ def verify_necessity(qa, chunks, client, threshold=.1):
             selections.append(([], [cid]))
     for indexes, selected in selections:
             selected_set = set(selected)
+            catalogue={f'e{i}':dict(chunk_id=cid,quote=chunks[cid]['text']) for i,cid in enumerate(selected)}
             solved = client.ask("blind_solve",
                 "只根据给定证据回答问题，不使用记忆或猜测。返回{answer:string,sufficient:bool}；"
                 "缺少证据必须sufficient=false，不补全缺失事实。",
                 dict(question=qa["question"], evidence=[chunks[c] for c in selected]))
             if not isinstance(solved.get("answer"), str) or type(solved.get("sufficient")) is not bool:
                 raise ValueError("invalid blind solver schema")
-            coverage = client.ask("answer_coverage",
+            # With no evidence, supported coverage is exactly zero. Do not ask
+            # a judge shown the target answer to invent evidence for this control.
+            coverage = dict(claims=[dict(claim_id=cid,covered=False,supported=False,citations=[]) for cid in claim_ids]) if not selected else client.ask("answer_coverage",
                 "对照目标答案事实，评估盲答是否覆盖且被当前证据支持。目标事实仅为评测标准，不能作为证据。"
-                "每条返回claim_id、covered:bool、supported:bool和citations:[{chunk_id,quote}]，quote逐字来自当前证据。"
+                "每条返回claim_id、covered:bool、supported:bool和citations:[string]，只能选择allowed_citations中的citation_id。"
+                "禁止生成或改写引用原句，禁止引用目标答案作为证据。"
                 "缺证据、只复述题干或无依据推断都给false。返回{claims:[...]}。",
                 dict(question=qa["question"], blind_answer=solved["answer"],
-                     target_claims=qa["answer_claims"], evidence=[chunks[c] for c in selected]))
+                     target_claims=[dict(claim_id=c['claim_id'],text=c['text']) for c in qa['answer_claims']],
+                     allowed_citations=[dict(citation_id=k,**v) for k,v in catalogue.items()],
+                     evidence=[chunks[c] for c in selected]))
             rows = exact_rows(coverage, "claims", claim_ids, "claim_id")
             supported = []
             for row in rows:
@@ -143,13 +149,20 @@ def verify_necessity(qa, chunks, client, threshold=.1):
                     raise ValueError("coverage citations must be a list")
                 if valid and not citations:
                     raise ValueError("supported claim lacks citations")
+                resolved=[]
                 for citation in citations:
+                    if isinstance(citation,str):
+                        if citation not in catalogue:
+                            raise ValueError('coverage cites unknown catalogue reference')
+                        citation=dict(catalogue[citation])
                     if not isinstance(citation, dict):
                         raise ValueError("invalid coverage citation")
                     cid = citation.get("chunk_id")
                     quote = text(citation.get("quote"), "coverage quote")
                     if cid not in selected_set or quote not in chunks[cid]["text"]:
                         raise ValueError("coverage cites absent evidence")
+                    resolved.append(citation)
+                row['citations']=resolved
                 if valid:
                     supported.append(row["claim_id"])
             score = len(supported) / len(claim_ids)

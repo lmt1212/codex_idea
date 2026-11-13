@@ -54,6 +54,10 @@ def mine_paths(facts, candidate_edges, beam_width=16, path_limit=100, strategy="
                                 continue
                         if task == "comparison" and (path[0]["predicate"] != f["predicate"] or path[0]["subject_id"] == f["subject_id"] or path[0]["conditions"] != f["conditions"]):
                             continue
+                        if task == 'comparison' and path[0]['object_id']==f['object_id']:
+                            # Identical extracted values do not establish a contrast;
+                            # keep their edges for other task types, not this template.
+                            continue
                         connections = [adjacency[other["fact_id"]][fid] for other in path if fid in adjacency[other["fact_id"]]]
                         # Semantic recall alone is not a reasoning relation. Require
                         # a bridge or a comparable shared attribute before expansion.
