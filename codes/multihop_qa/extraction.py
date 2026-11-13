@@ -36,6 +36,20 @@ def formula_prefix_issues(values, source):
     return issues
 
 
+QUALIFIER_MARKERS=('两种或两种以上','某一个','通常','一般','至少','至多','仅','不得')
+
+
+def qualifier_omission_issues(values, source):
+    """Require selected source qualifiers to survive structured extraction.
+
+    These markers change scope or certainty.  The check reports omissions but
+    never inserts a qualifier into a model-produced fact.
+    """
+    represented=''.join(values)
+    return [dict(qualifier=marker,reason='source_qualifier_omitted')
+            for marker in QUALIFIER_MARKERS if marker in source and marker not in represented]
+
+
 def validate_fact(raw, chunk, aliases=None):
     if not isinstance(raw, dict):
         raise ValueError("fact must be an object")
@@ -60,6 +74,10 @@ def validate_fact(raw, chunk, aliases=None):
     formula_issues=formula_prefix_issues((f['subject'],f['predicate'],f['object']),f['quote'])
     if formula_issues:
         raise ValueError('extracted formula is truncated: '+formula_issues[0]['source_fragment'])
+    qualifier_issues=qualifier_omission_issues((f['subject'],f['predicate'],f['object'],
+                                                 *f['conditions'],f['time'],f['event']),f['quote'])
+    if qualifier_issues:
+        raise ValueError('extracted qualifier is omitted: '+qualifier_issues[0]['qualifier'])
     aliases = aliases or {}
     f.update(subject_id=canonical(f["subject"], aliases), object_id=canonical(f["object"], aliases),
              chunk_id=chunk["chunk_id"], doc_id=chunk["doc_id"],
@@ -121,7 +139,8 @@ def extract_staged(chunk,client,aliases=None):
         raise ValueError('subject is a definition fragment rather than an explicit term')
     qualifiers=client.ask('classify_fact',
         '判断三元组在原句中的角色及限定条件，不修改三元组。role只允许'+','.join(sorted(ROLES))+'. '
-        'conditions只填写原句中逐字存在的条件片段，无则[]。time只填原文时间，无则空字符串。'
+        'conditions只填写原句中逐字存在的条件片段，无则[]。原文出现“通常”“一般”“某一个”“两种或两种以上”“至少”“至多”“仅”“不得”时，'
+        '必须在subject、predicate、object或conditions中保留该词，不能遗漏。time只填原文时间，无则空字符串。'
         'polarity为affirmed或negated，modality为certain或uncertain。严格JSON示例：'
         '{"role":"attribute","conditions":[],"time":"","polarity":"affirmed","modality":"certain","event":""}。',
         dict(text=quote,triple=triple))

@@ -21,6 +21,28 @@ class StagedClient:
 
 
 class LocalWorkflowTests(unittest.TestCase):
+    def test_source_scope_qualifier_must_survive_fact_extraction(self):
+        chunk=chunk_documents(fixture_documents())[0]
+        chunk['text']='甲通常在高温下采用乙。'
+        raw=dict(subject='甲',predicate='采用',object='乙',quote=chunk['text'],role='adoption',
+                 conditions=[],time='',polarity='affirmed',modality='certain')
+        with self.assertRaisesRegex(ValueError,'qualifier is omitted: 通常'):
+            validate_fact(raw,chunk)
+
+    def test_qualifier_in_condition_preserves_fact_scope(self):
+        chunk=chunk_documents(fixture_documents())[0]
+        chunk['text']='甲通常在高温下采用乙。'
+        raw=dict(subject='甲',predicate='采用',object='乙',quote=chunk['text'],role='adoption',
+                 conditions=['通常在高温下'],time='',polarity='affirmed',modality='certain')
+        self.assertEqual(validate_fact(raw,chunk)['conditions'],['通常在高温下'])
+
+    def test_quantifier_preserved_by_object_does_not_need_duplicate_condition(self):
+        chunk=chunk_documents(fixture_documents())[0]
+        chunk['text']='甲为两种或两种以上元素组成的材料。'
+        raw=dict(subject='甲',predicate='为',object='两种或两种以上元素组成的材料',quote=chunk['text'],role='attribute',
+                 conditions=[],time='',polarity='affirmed',modality='certain')
+        self.assertEqual(validate_fact(raw,chunk)['object'],'两种或两种以上元素组成的材料')
+
     def test_extracted_line_wrapped_formula_prefix_is_rejected_before_graph(self):
         chunk=chunk_documents(fixture_documents())[0]
         chunk['text']='草酸稀土的化学式为REx(C2O4)\ny。'

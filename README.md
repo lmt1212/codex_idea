@@ -4,7 +4,7 @@
 
 当前服务器：[服务器连接说明](服务器连接说明.md)，SSH 端口 `35276`，本机可用 `ssh codex-idea-autodl`。项目已同步 GitHub，后续修复与真实试跑状态见进展记录。
 
-最新开发批次：本地 schema 解码、Transformers 5 兼容层、冻结请求双模型对照、伪比较拦截和公式后缀检查已接入；88 项测试通过。固定 12 块当前保留 9 条候选事实，仍无正式验收样本。完整状态以项目进展记录为准。
+最新开发批次：本地 schema 解码、Transformers 5 兼容层、冻结请求双模型对照、伪比较拦截、公式后缀及原文限定词检查已接入；91 项测试通过。固定 12 块当前保留 8 条候选事实、4 条失败记录，仍无正式验收样本。完整状态以项目进展记录为准。
 
 本地推理需安装 `requirements-training.txt` 中的 `lm-format-enforcer==0.11.3`；`generate` 默认 `--json-mode schema`。保留 `--json-mode unconstrained` 用于诊断。冻结请求对照示例：`python scripts/replay_verifier.py output/dev_context_qa_04 --models /root/autodl-tmp/Qwen2.5-3B-Instruct /root/autodl-tmp/Qwen3-4B --output output/new_replay`。该工具只比较请求输出，不创建人工标签或正式通过结果。
 
