@@ -5,6 +5,7 @@ import urllib.request
 import time
 import urllib.error
 import ast
+import hashlib
 from pathlib import Path
 from .schema import text
 
@@ -90,10 +91,29 @@ class LocalJSONClient:
         self.tokenizer=None
         self.encoder=None
         self.extraction_strategy=extraction_strategy
+        self.require_fact_review=True
 
     def ask(self,task,instruction,data):
         if len(self.history)>=self.max_calls:
             raise ValueError('local inference call budget exhausted')
+        started=time.monotonic()
+        record=dict(task=task,actual_model='local:'+self.model,status='running',
+                    instruction=instruction,input=data,
+                    request_sha256=hashlib.sha256(json.dumps([instruction,data],ensure_ascii=False,sort_keys=True).encode()).hexdigest(),
+                    parameters=dict(max_new_tokens=self.max_new_tokens,do_sample=False,enable_thinking=False),
+                    raw_response=None)
+        self.history.append(record)
+        try:
+            result=self._ask(task,instruction,data,record)
+            record['status']='parsed'
+            return result
+        except Exception as ex:
+            record.update(status='failed',error_type=type(ex).__name__,error=str(ex))
+            raise
+        finally:
+            record['elapsed_seconds']=time.monotonic()-started
+
+    def _ask(self,task,instruction,data,record):
         import torch
         from transformers import AutoTokenizer,AutoModelForCausalLM
         if self.encoder is None:
@@ -119,11 +139,11 @@ class LocalJSONClient:
             generated=self.encoder.generate(**inputs,max_new_tokens=self.max_new_tokens,do_sample=False,
                                            pad_token_id=self.tokenizer.eos_token_id)
         value=self.tokenizer.decode(generated[0,inputs.input_ids.shape[1]:],skip_special_tokens=True).strip()
+        record['raw_response']=value
         if value.startswith('```'):
             value=value.split('\n',1)[1].rsplit('```',1)[0].strip()
-        self.history.append(dict(task=task,actual_model='local:'+self.model,
-                                 response_preview=value[:1000],
-                                 usage=dict(prompt_tokens=int(inputs.input_ids.shape[1]),completion_tokens=int(generated.shape[1]-inputs.input_ids.shape[1]))))
+        record.update(response_preview=value[:1000],
+                      usage=dict(prompt_tokens=int(inputs.input_ids.shape[1]),completion_tokens=int(generated.shape[1]-inputs.input_ids.shape[1])))
         payload,mode=parse_model_object(value)
-        self.history[-1]['syntax']=mode
+        record['syntax']=mode
         return payload

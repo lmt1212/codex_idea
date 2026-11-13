@@ -73,10 +73,20 @@ def verify_support(qa, chunks, client):
     result = client.ask("answer_support",
         "逐条检查答案事实是否被其引用证据支持，包括事实之间的推导。检查无遗漏条件、时间、否定、"
         "单位与范围；引用存在不代表支持。检查题意、答案完整性、共同推理目标和唯一性，排除并列拼题。"
+        "每条claim额外返回missing_qualifiers字符串数组，明确指出影响本题结论却遗漏的条件，"
+        "以及assessment_reason说明证据依据。qualifiers_complete为false时必须列出缺失项；不能确认时写无法确认的具体项。"
         "返回{claims:[{claim_id,entailed:bool,qualifiers_complete:bool,citations_correct:bool}],"
         "question_clear:bool,answer_complete:bool,unique_answer:bool,connected_reasoning:bool,reason:string}。",
         dict(qa=qa, evidence=[chunks[c] for c in qa["evidence_chunk_ids"]]))
     rows = exact_rows(result, "claims", [c["claim_id"] for c in qa["answer_claims"]], "claim_id")
+    result['diagnostic_issues']=[]
+    for row in rows:
+        missing=row.get('missing_qualifiers')
+        if row.get('qualifiers_complete') is False and not missing:
+            result['diagnostic_issues'].append(dict(claim_id=row['claim_id'],reason='qualifier_rejection_without_specific_missing_item'))
+        if row.get('qualifiers_complete') is True and missing:
+            row['qualifiers_complete']=False
+            result['diagnostic_issues'].append(dict(claim_id=row['claim_id'],reason='qualifier_decision_conflicts_with_missing_items'))
     result["passed"] = (all(all(r.get(k) is True for k in ("entailed", "qualifiers_complete", "citations_correct")) for r in rows)
                         and all(result.get(k) is True for k in ("question_clear", "answer_complete", "unique_answer", "connected_reasoning")))
     return result

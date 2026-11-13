@@ -1,6 +1,7 @@
 """Persisted stages sharing a single schema; each run writes to a fresh folder."""
 from pathlib import Path
 import json
+from collections import Counter
 from .schema import VERSION, read_jsonl, write_jsonl, write_json, empty_output
 from .ingestion import SUPPORTED, parse_file, chunk_documents
 from .extraction import extract, validate_fact, validate_cached_fact
@@ -84,10 +85,16 @@ def extraction_stage(folder, output, client=None, cached_facts=None, source_revi
                 errors.append(dict(chunk_id=chunk["chunk_id"], error_type=type(ex).__name__,
                                    reason=str(ex) if isinstance(ex, ValueError) else "extraction_request_failed"))
             write_jsonl(output / "facts.jsonl", facts)
+            write_jsonl(output / "calls.jsonl", client.history)
     report = dict(stage="extraction", chunks=len(chunks), facts=len(facts), rejected=len(rejected),
                   errors=len(errors), review_chunks=sum(c["needs_review"] for c in chunks),
                   extraction_mode="cache" if cached_facts is not None else ('local' if type(client).__name__=='LocalJSONClient' else 'api'),
                   usage=client.history if client else [], status="facts_pending_semantic_verification")
+    if cached_facts is None:
+        report.update(eligible_chunks=sum(not c['needs_review'] and c.get('eligible_for_experiment',True) for c in chunks),
+                      attempted_chunks=len(selected),
+                      chunks_with_facts=len({f['chunk_id'] for f in facts}),
+                      empty_chunks=len(selected)-len(errors)-len({f['chunk_id'] for f in facts}))
     write_json(output / "aliases.json", aliases or {})
     persist(output, dict(documents=docs, chunks=chunks, facts=facts, rejected=rejected, errors=errors), report)
     return report
@@ -146,6 +153,8 @@ def generation_stage(folder, output, generator, verifier, threshold=.1, limit=10
                                reason=str(ex) if isinstance(ex, ValueError) else "generation_or_verification_failed"))
         for name, rows in (("qa", qas), ("rejected", rejected), ("errors", errors)):
             write_jsonl(output / (name + ".jsonl"), rows)
+        write_jsonl(output / 'generator_calls.jsonl', generator.history)
+        write_jsonl(output / 'verifier_calls.jsonl', verifier.history)
     report = dict(stage="generation", candidate_paths=len(paths), attempted=min(limit, len(paths)),
                   auto_passed=sum(q['verification_status']=='auto_passed_pending_human_review' for q in qas),
                   diagnostic_candidates=sum(q['verification_status']=='diagnostic_pending_independent_and_human_review' for q in qas),
@@ -153,5 +162,7 @@ def generation_stage(folder, output, generator, verifier, threshold=.1, limit=10
                   necessity_threshold=threshold, threshold_calibrated=bool(calibration),calibration=calibration,
                   generator_usage=generator.history, verifier_usage=verifier.history,
                   limitation="Model verification is not human proof; no claimed dataset acceptance rate.")
+    report['rejections_by_stage']=dict(Counter(r.get('stage','unknown') for r in rejected))
+    report['verification_calls_by_task']=dict(Counter(r.get('task','unknown') for r in verifier.history))
     persist(output, dict(documents=docs, chunks=chunks, facts=facts, paths=paths, qa=qas, rejected=rejected, errors=errors), report)
     return report

@@ -59,7 +59,7 @@ def extract(chunk, client, aliases=None):
 
 def extract_staged(chunk,client,aliases=None):
     selected=client.ask('select_source',
-        '从text中选择一个表达明确事实的完整原句，逐字复制，保留换行、条件、否定和时间。只输出JSON：{"quote":"逐字原句"}。不得改写。',
+        '从text中选择表达明确事实的连续完整原文，逐字复制，保留换行、条件、否定和时间。定义句省略主体时必须连同前面的术语标题一起选取，不能只摘定义后半句。只输出JSON：{"quote":"逐字原句"}。不得改写或拼接不连续内容。',
         dict(text=chunk['text']))
     quote=selected.get('quote')
     if not isinstance(quote,str) or not quote or chunk['text'].count(quote)!=1:
@@ -70,6 +70,8 @@ def extract_staged(chunk,client,aliases=None):
     for key in ('subject','predicate','object'):
         if not isinstance(triple.get(key),str) or not triple[key] or triple[key] not in quote:
             raise ValueError('triple endpoint not anchored to selected quote: '+key)
+    if getattr(client,'require_fact_review',False) and re.match(r'^(?:以.+为原料|为一种|由.+组成的物质)',triple['subject']):
+        raise ValueError('subject is a definition fragment rather than an explicit term')
     qualifiers=client.ask('classify_fact',
         '判断三元组在原句中的角色及限定条件，不修改三元组。role只允许'+','.join(sorted(ROLES))+'. '
         'conditions只填写原句中逐字存在的条件片段，无则[]。time只填原文时间，无则空字符串。'
@@ -83,6 +85,14 @@ def extract_staged(chunk,client,aliases=None):
     raw={key:triple[key] for key in ('subject','predicate','object')}
     raw.update({key:qualifiers.get(key) for key in ('role','conditions','time','polarity','modality')})
     raw.update(quote=quote,event=qualifiers.get('event',''))
+    if getattr(client,'require_fact_review',False):
+        check=client.ask('fact_completeness',
+            '核验候选三元组是否完整表达原文事实。主体必须是明确命名的实体/术语，不能是“以…为原料”等残句；'
+            '关系和客体不得改变原义，条件、数量、否定和不确定性不得遗漏。逐项判断，无法确认给false。'
+            '返回严格JSON：{"subject_explicit":false,"relation_complete":false,"qualifiers_complete":false,"reason":"具体依据"}。',
+            dict(source=chunk['text'],fact=raw))
+        if not all(check.get(k) is True for k in ('subject_explicit','relation_complete','qualifiers_complete')):
+            raise ValueError('fact completeness rejected: '+str(check.get('reason','unknown')))
     return [validate_fact(raw,chunk,aliases)]
 
 
