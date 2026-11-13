@@ -1,0 +1,4 @@
+{
+  "local_models_only": true,
+  "reason": "用户要求只使用本机和AutoDL的本地模型，暂不向外部API发送正文。"
+}

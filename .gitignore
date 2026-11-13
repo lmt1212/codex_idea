@@ -1,0 +1,12 @@
+.env
+.env.*
+book/
+*.safetensors
+*.pem
+*.key
+.idea/
+.venv/
+__pycache__/
+*.pyc
+output/
+tmp/

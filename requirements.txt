@@ -1,0 +1,2 @@
+# Optional: native text-layer PDF parsing. Offline demo/tests need only Python.
+PyMuPDF>=1.24,<3
