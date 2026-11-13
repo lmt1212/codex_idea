@@ -15,6 +15,27 @@ def canonical(name, aliases):
     return aliases.get(normalized, normalized)
 
 
+def formula_prefix_issues(values, source):
+    """Reject an extracted formula prefix whose source has a short suffix.
+
+    This is a deliberately narrow guard for layout line-wraps such as
+    ``REx(C2O4)\ny``. It does not interpret chemical meaning or repair text.
+    """
+    compact = re.sub(r'\s+', '', source)
+    source_formulas = re.findall(r'[A-Za-z][A-Za-z0-9()]*', compact)
+    issues=[]
+    for value in values:
+        for candidate in re.findall(r'[A-Za-z][A-Za-z0-9()]*', re.sub(r'\s+', '', value)):
+            if ')' not in candidate or not any(char.isdigit() for char in candidate):
+                continue
+            for full in source_formulas:
+                suffix=full[len(candidate):]
+                if full.startswith(candidate) and re.fullmatch(r'[xyz0-9]+',suffix):
+                    issues.append(dict(extracted_fragment=candidate,source_fragment=full,
+                                       reason='formula_suffix_omitted'))
+    return issues
+
+
 def validate_fact(raw, chunk, aliases=None):
     if not isinstance(raw, dict):
         raise ValueError("fact must be an object")
@@ -36,6 +57,9 @@ def validate_fact(raw, chunk, aliases=None):
         raise ValueError("cached coordinates do not match source")
     if "chunk_id" in raw and raw["chunk_id"] != chunk["chunk_id"]:
         raise ValueError("cached chunk does not match")
+    formula_issues=formula_prefix_issues((f['subject'],f['predicate'],f['object']),f['quote'])
+    if formula_issues:
+        raise ValueError('extracted formula is truncated: '+formula_issues[0]['source_fragment'])
     aliases = aliases or {}
     f.update(subject_id=canonical(f["subject"], aliases), object_id=canonical(f["object"], aliases),
              chunk_id=chunk["chunk_id"], doc_id=chunk["doc_id"],

@@ -21,6 +21,40 @@ class StagedClient:
 
 
 class LocalWorkflowTests(unittest.TestCase):
+    def test_extracted_line_wrapped_formula_prefix_is_rejected_before_graph(self):
+        chunk=chunk_documents(fixture_documents())[0]
+        chunk['text']='草酸稀土的化学式为REx(C2O4)\ny。'
+        raw=dict(subject='草酸稀土',predicate='化学式为',object='REx(C2O4)',quote=chunk['text'],role='attribute',
+                 conditions=[],time='',polarity='affirmed',modality='certain')
+        with self.assertRaisesRegex(ValueError,'formula is truncated'):
+            validate_fact(raw,chunk)
+
+    def test_complete_line_wrapped_formula_is_allowed_in_fact(self):
+        chunk=chunk_documents(fixture_documents())[0]
+        chunk['text']='草酸稀土的化学式为REx(C2O4)\ny。'
+        raw=dict(subject='草酸稀土',predicate='化学式为',object='REx(C2O4)y',quote=chunk['text'],role='attribute',
+                 conditions=[],time='',polarity='affirmed',modality='certain')
+        self.assertEqual(validate_fact(raw,chunk)['object'],'REx(C2O4)y')
+
+    def test_comparison_enumeration_is_rejected_before_model_support(self):
+        from codes.multihop_qa.generation import question_structure_issues
+        qa=dict(task_type='comparison',question='甲和乙的属性分别是什么？',
+                answer_claims=[dict(fact_ids=['a']),dict(fact_ids=['b'])])
+        self.assertEqual(question_structure_issues(qa),[
+            'enumerative_comparison_question','comparison_question_lacks_difference_goal',
+            'comparison_answer_lacks_joint_claim'])
+
+    def test_comparison_difference_with_joint_claim_is_eligible_for_model_checks(self):
+        from codes.multihop_qa.generation import question_structure_issues
+        qa=dict(task_type='comparison',question='甲和乙在相同条件下的属性差异是什么？',
+                answer_claims=[dict(fact_ids=['a','b'])])
+        self.assertEqual(question_structure_issues(qa),[])
+
+    def test_noncomparison_is_not_rejected_by_comparison_language_rule(self):
+        from codes.multihop_qa.generation import question_structure_issues
+        qa=dict(task_type='entity_bridge',question='甲和乙分别是什么？',answer_claims=[dict(fact_ids=['a'])])
+        self.assertEqual(question_structure_issues(qa),[])
+
     def test_line_wrapped_formula_suffix_cannot_be_dropped(self):
         from codes.multihop_qa.verification import verify_support
         qa=dict(answer_claims=[dict(claim_id='c',text='化学式是REx(C2O4)',evidence_chunk_ids=['e'])],evidence_chunk_ids=['e'])

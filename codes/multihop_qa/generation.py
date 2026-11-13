@@ -3,6 +3,26 @@ from .schema import VERSION, verification_fingerprint
 from .verification import verify_path, validate_qa, verify_support, verify_necessity
 
 
+def question_structure_issues(qa):
+    """Reject a narrow pseudo-comparison before expensive model judging.
+
+    A list of two independent values is a lookup task, even when it has two
+    citations.  This check is deliberately limited to comparison paths; other
+    task types still depend on support and necessity verification.
+    """
+    if qa['task_type'] != 'comparison':
+        return []
+    question = qa['question']
+    issues = []
+    if '分别' in question and any(marker in question for marker in ('什么', '哪些', '多少')):
+        issues.append('enumerative_comparison_question')
+    if not any(marker in question for marker in ('差异', '区别', '不同', '比较', '相比')):
+        issues.append('comparison_question_lacks_difference_goal')
+    if not any(len(claim['fact_ids']) >= 2 for claim in qa['answer_claims']):
+        issues.append('comparison_answer_lacks_joint_claim')
+    return issues
+
+
 def generate_qa(path, facts, chunks, generator, verifier, threshold=.1, review_mode='independent'):
     diagnostic=review_mode=='same-model-diagnostic'
     if review_mode not in {'independent','same-model-diagnostic'}:
@@ -19,10 +39,13 @@ def generate_qa(path, facts, chunks, generator, verifier, threshold=.1, review_m
         "唯一片段，所有实质答案文本都必须由不重叠的claims覆盖，包含连接结论。只能引用给定fact_ids。",
         dict(path=path, facts=[facts[f] for f in path["fact_ids"]],
              evidence=[chunks[c] for c in path["evidence_chunk_ids"]],
-             requirements='比较类型须要求分别说明两个对象在同一维度的差异，完整保留各自数量或条件；禁止只问共同点。每条路径事实均需参与回答，不得改为只用一处证据的定义题。'))
+             requirements='比较类型须以差异、区别或相比为目标，不得问“分别是什么”；至少一个连接结论claim必须同时引用两个fact_ids，并完整保留各自数量或条件。每条路径事实均需参与回答，不得改为只用一处证据的定义题。'))
     if result.get("qa") is None:
         return None, dict(stage="generation", path_id=path["path_id"], reason="insufficient_evidence")
     qa = validate_qa(result["qa"], path, facts)
+    structure_issues = question_structure_issues(qa)
+    if structure_issues:
+        return None, dict(stage='question_structure', qa=qa, issues=structure_issues)
     support = verify_support(qa, chunks, verifier)
     if not support["passed"]:
         return None, dict(stage="answer_support", qa=qa, check=support)
